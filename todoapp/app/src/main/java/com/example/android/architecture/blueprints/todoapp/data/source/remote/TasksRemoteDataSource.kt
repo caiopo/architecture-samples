@@ -15,103 +15,79 @@
  */
 package com.example.android.architecture.blueprints.todoapp.data.source.remote
 
-import android.os.Handler
+import android.net.ConnectivityManager
+import android.util.Log
+import androidx.annotation.VisibleForTesting
+import androidx.core.net.ConnectivityManagerCompat
 import com.example.android.architecture.blueprints.todoapp.data.Task
 import com.example.android.architecture.blueprints.todoapp.data.source.TasksDataSource
-import com.google.common.collect.Lists
+import com.example.android.architecture.blueprints.todoapp.util.AppExecutors
 
 /**
- * Implementation of the data source that adds a latency simulating network.
+ * Implementation of the data source that fetches tasks from a remote server.
  */
-object TasksRemoteDataSource : TasksDataSource {
+class TasksRemoteDataSource private constructor(
+        private val appExecutors: AppExecutors,
+        private val tasksService: TasksService,
+        private val connectivityManager: ConnectivityManager
+) : TasksDataSource {
 
-    private const val SERVICE_LATENCY_IN_MILLIS = 5000L
-
-    private var TASKS_SERVICE_DATA = LinkedHashMap<String, Task>(2)
-
-    init {
-        addTask("Build tower in Pisa", "Ground looks good, no foundation work required.")
-        addTask("Finish bridge in Tacoma", "Found awesome girders at half the cost!")
-    }
-
-    private fun addTask(title: String, description: String) {
-        val newTask = Task(title, description)
-        TASKS_SERVICE_DATA.put(newTask.id, newTask)
-    }
-
-    /**
-     * Note: [TasksDataSource.LoadTasksCallback.onDataNotAvailable] is never fired. In a real remote data
-     * source implementation, this would be fired if the server can't be contacted or the server
-     * returns an error.
-     */
     override fun getTasks(callback: TasksDataSource.LoadTasksCallback) {
-        // Simulate network by delaying the execution.
-        val tasks = Lists.newArrayList(TASKS_SERVICE_DATA.values)
-        Handler().postDelayed({
-            callback.onTasksLoaded(tasks)
-        }, SERVICE_LATENCY_IN_MILLIS)
-    }
+        if (ConnectivityManagerCompat.isActiveNetworkMetered(connectivityManager)) {
+            callback.onDataNotAvailable()
+            return
+        }
 
-    /**
-     * Note: [TasksDataSource.GetTaskCallback.onDataNotAvailable] is never fired. In a real remote data
-     * source implementation, this would be fired if the server can't be contacted or the server
-     * returns an error.
-     */
-    override fun getTask(taskId: String, callback: TasksDataSource.GetTaskCallback) {
-        val task = TASKS_SERVICE_DATA[taskId]
+        appExecutors.networkIO.execute {
+            val request = tasksService.fetchTasks().execute()
+            val body = request.body()
 
-        // Simulate network by delaying the execution.
-        with(Handler()) {
-            if (task != null) {
-                postDelayed({ callback.onTaskLoaded(task) }, SERVICE_LATENCY_IN_MILLIS)
-            } else {
-                postDelayed({ callback.onDataNotAvailable() }, SERVICE_LATENCY_IN_MILLIS)
+            appExecutors.mainThread.execute {
+                if (request.isSuccessful && body != null) {
+                    callback.onTasksLoaded(body)
+                } else {
+                    callback.onDataNotAvailable()
+                }
             }
         }
     }
 
-    override fun saveTask(task: Task) {
-        TASKS_SERVICE_DATA.put(task.id, task)
-    }
+    override fun getTask(taskId: String, callback: TasksDataSource.GetTaskCallback) {}
 
-    override fun completeTask(task: Task) {
-        val completedTask = Task(task.title, task.description, task.id).apply {
-            isCompleted = true
+    override fun saveTask(task: Task) {}
+
+    override fun completeTask(task: Task) {}
+
+    override fun completeTask(taskId: String) {}
+
+    override fun activateTask(task: Task) {}
+
+    override fun activateTask(taskId: String) {}
+
+    override fun clearCompletedTasks() {}
+
+    override fun refreshTasks() {}
+
+    override fun deleteAllTasks() {}
+
+    override fun deleteTask(taskId: String) {}
+
+    companion object {
+        private var INSTANCE: TasksRemoteDataSource? = null
+
+        @JvmStatic
+        fun getInstance(appExecutors: AppExecutors, tasksService: TasksService, connectivityManager: ConnectivityManager): TasksRemoteDataSource {
+            if (INSTANCE == null) {
+                synchronized(TasksRemoteDataSource::javaClass) {
+                    INSTANCE = TasksRemoteDataSource(appExecutors, tasksService, connectivityManager)
+                }
+            }
+            return INSTANCE!!
         }
-        TASKS_SERVICE_DATA.put(task.id, completedTask)
-    }
 
-    override fun completeTask(taskId: String) {
-        // Not required for the remote data source because the {@link TasksRepository} handles
-        // converting from a {@code taskId} to a {@link task} using its cached data.
-    }
-
-    override fun activateTask(task: Task) {
-        val activeTask = Task(task.title, task.description, task.id)
-        TASKS_SERVICE_DATA.put(task.id, activeTask)
-    }
-
-    override fun activateTask(taskId: String) {
-        // Not required for the remote data source because the {@link TasksRepository} handles
-        // converting from a {@code taskId} to a {@link task} using its cached data.
-    }
-
-    override fun clearCompletedTasks() {
-        TASKS_SERVICE_DATA = TASKS_SERVICE_DATA.filterValues {
-            !it.isCompleted
-        } as LinkedHashMap<String, Task>
-    }
-
-    override fun refreshTasks() {
-        // Not required because the {@link TasksRepository} handles the logic of refreshing the
-        // tasks from all the available data sources.
-    }
-
-    override fun deleteAllTasks() {
-        TASKS_SERVICE_DATA.clear()
-    }
-
-    override fun deleteTask(taskId: String) {
-        TASKS_SERVICE_DATA.remove(taskId)
+        @VisibleForTesting
+        fun clearInstance() {
+            INSTANCE = null
+        }
     }
 }

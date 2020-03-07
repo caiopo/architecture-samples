@@ -17,12 +17,16 @@
 package com.example.android.architecture.blueprints.todoapp
 
 import android.content.Context
+import android.net.ConnectivityManager
 import com.example.android.architecture.blueprints.todoapp.data.source.TasksDataSource
 import com.example.android.architecture.blueprints.todoapp.data.source.TasksRepository
 import com.example.android.architecture.blueprints.todoapp.data.source.local.TasksLocalDataSource
 import com.example.android.architecture.blueprints.todoapp.data.source.local.ToDoDatabase
 import com.example.android.architecture.blueprints.todoapp.data.source.remote.TasksRemoteDataSource
+import com.example.android.architecture.blueprints.todoapp.data.source.remote.TasksService
 import com.example.android.architecture.blueprints.todoapp.util.AppExecutors
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
 
 /**
  * Enables injection of production implementations for
@@ -30,8 +34,27 @@ import com.example.android.architecture.blueprints.todoapp.util.AppExecutors
  */
 object Injection {
     fun provideTasksRepository(context: Context): TasksRepository {
+        val appExecutors = AppExecutors()
+
         val database = ToDoDatabase.getInstance(context)
-        return TasksRepository.getInstance(TasksRemoteDataSource,
-                TasksLocalDataSource.getInstance(AppExecutors(), database.taskDao()))
+        val localDataSource = TasksLocalDataSource.getInstance(appExecutors, database.taskDao())
+
+        val tasksService = provideTaskService()
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val remoteDataSource = TasksRemoteDataSource.getInstance(appExecutors, tasksService, connectivityManager)
+
+        return TasksRepository.getInstance(
+                remoteDataSource,
+                localDataSource
+        )
+    }
+
+    private fun provideTaskService(): TasksService {
+        val retrofit = Retrofit.Builder()
+                .baseUrl("http://tasks-api.wplexservices.com.br/")
+                .addConverterFactory(GsonConverterFactory.create())
+                .build()
+
+        return retrofit.create<TasksService>(TasksService::class.java)
     }
 }
